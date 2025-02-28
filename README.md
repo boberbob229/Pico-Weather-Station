@@ -4,4 +4,13 @@ My name is bober, i like to work on stuff and this is one of my projects. It is 
 
 The code is very easy to read and modify, i hope you have fun with it! 
 
+
 Farewell Stranger! :)
+
+
+
+
+
+Requirements: A brain, some kind of text editor, python3 and a Pico W. 
+
+I will make a Pico 2W verison soon the price is just crazy :)
