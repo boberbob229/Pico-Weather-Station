@@ -1,0 +1,97 @@
+import time
+import wifi
+import socketpool
+import microcontroller
+import adafruit_requests
+import json
+import ssl
+import os
+
+# Wi-Fi Configuration
+CONFIG_FILE = "wifi_config.txt"
+
+# OpenWeather API
+API_KEY = "YOUR_API_KEY"  # Replace with your API Key
+CITY = "New York"
+API_URL = f"http://api.openweathermap.org/data/2.5/weather?q={CITY}&appid={API_KEY}&units=metric"
+
+# Initialize Networking
+pool = socketpool.SocketPool(wifi.radio)
+requests = adafruit_requests.Session(pool, ssl.create_default_context())
+
+def save_wifi_credentials(ssid, password):
+    with open(CONFIG_FILE, "w") as f:
+        f.write(json.dumps({"ssid": ssid, "password": password}))
+
+def load_wifi_credentials():
+    try:
+        with open(CONFIG_FILE, "r") as f:
+            return json.loads(f.read())
+    except (OSError, ValueError):
+        return None
+
+def start_access_point():
+    print("Starting AP mode...")
+    wifi.radio.stop_station()
+    wifi.radio.start_ap("PicoWeatherSetup", "setup1234")
+    print("AP Mode Enabled. Connect to 'PicoWeatherSetup'")
+    print("Open http://192.168.4.1/setup in a browser")
+
+    server = pool.socket(pool.AF_INET, pool.SOCK_STREAM)
+    server.bind(("0.0.0.0", 80))
+    server.listen(2)
+
+    while True:
+        try:
+            conn, addr = server.accept()
+            request = conn.recv(1024).decode("utf-8")
+            if "GET /setup" in request:
+                response = """HTTP/1.1 200 OK\nContent-Type: text/html\n\n""" + open("setup_page.html").read()
+                conn.send(response.encode())
+            elif "POST /connect" in request:
+                body = request.split("\r\n\r\n")[-1]
+                params = {kv.split("=")[0]: kv.split("=")[1] for kv in body.split("&") if "=" in kv}
+
+                ssid = params.get("ssid", "")
+                password = params.get("password", "")
+
+                if ssid and password:
+                    save_wifi_credentials(ssid, password)
+                    wifi.radio.stop_ap()
+                    wifi.radio.connect(ssid, password)
+                    if wifi.radio.connected:
+                        conn.send("HTTP/1.1 200 OK\n\nConnected! Restarting...".encode())
+                        time.sleep(2)
+                        microcontroller.reset()
+                    else:
+                        conn.send("HTTP/1.1 400 Bad Request\n\nFailed to connect".encode())
+                else:
+                    conn.send("HTTP/1.1 400 Bad Request\n\nInvalid Data".encode())
+            conn.close()
+        except Exception as e:
+            print(f"Server Error: {e}")
+
+def get_weather():
+    try:
+        response = requests.get(API_URL)
+        data = response.json()
+        temp = data["main"]["temp"]
+        weather = data["weather"][0]["description"]
+        print(f"{CITY}: {temp}°C, {weather}")
+    except Exception as e:
+        print(f"Weather API Error: {e}")
+
+# Main Execution
+credentials = load_wifi_credentials()
+if credentials:
+    try:
+        wifi.radio.connect(credentials["ssid"], credentials["password"])
+        print(f"Connected! IP Address: {wifi.radio.ipv4_address}")
+        while True:
+            get_weather()
+            time.sleep(600)
+    except Exception as e:
+        print(f"Wi-Fi Connection Failed: {e}")
+        start_access_point()
+else:
+    start_access_point()
